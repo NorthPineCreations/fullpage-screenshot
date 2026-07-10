@@ -149,11 +149,16 @@ def window_under_pointer(x, y):
 
 
 def enable_app_accessibility(pid):
-    """Chromium/Electron apps only expose their UI tree when asked."""
+    """Chromium/Electron apps only expose their UI tree when asked.
+
+    Only AXManualAccessibility is safe to set: it is a Chromium-specific
+    attribute that other apps ignore. Never set AXEnhancedUserInterface —
+    it persists on the app and breaks text-expansion tools (Alfred
+    snippets) in that app until it restarts.
+    """
     try:
         app = AXUIElementCreateApplication(pid)
         AXUIElementSetAttributeValue(app, 'AXManualAccessibility', True)
-        AXUIElementSetAttributeValue(app, 'AXEnhancedUserInterface', True)
     except Exception as e:
         log.debug(f"enable_app_accessibility: {e}")
 
