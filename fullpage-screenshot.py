@@ -372,51 +372,28 @@ def find_final_overlap(prev, curr, expected):
     """Overlap for the last seam, where the clamped final scroll makes the
     true overlap anywhere between `expected` and a full frame.
 
-    Repetitive content (lists, tables) produces several plausible positions;
-    exact pixel comparison over the full overlap region disambiguates them.
+    Try every plausible overlap with exact pixel comparison at full
+    resolution. Ties resolve toward the largest overlap, so repetitive or
+    blank content near the page bottom never duplicates.
     """
-    ds = 2
-    prev_g = np.array(prev.resize(
-        (max(1, prev.width // ds), max(1, prev.height // ds)), Image.LANCZOS
-    ).convert('L'), dtype=np.float32)
-    curr_g = np.array(curr.resize(
-        (max(1, curr.width // ds), max(1, curr.height // ds)), Image.LANCZOS
-    ).convert('L'), dtype=np.float32)
-    h_p, h_c = prev_g.shape[0], curr_g.shape[0]
-    if h_p < 10 or h_c < 10:
+    h = min(prev.height, curr.height)
+    lo = max(3, int(expected) - 20)
+    if lo > h:
         return max(0, int(expected))
-
-    band_h = max(8, min(60, int(expected * 0.6) // ds if expected > 0 else 60))
-    band = curr_g[:band_h].flatten().astype(np.float64)
-    band -= band.mean()
-    std = band.std()
-    candidates = {int(expected)}
-    if std >= 1:
-        band /= std
-        nccs = []
-        for pos in range(0, h_p - band_h + 1):
-            region = prev_g[pos:pos + band_h].flatten().astype(np.float64)
-            region -= region.mean()
-            rs = region.std()
-            nccs.append(float(np.mean(band * (region / rs))) if rs >= 1 else -1.0)
-        nccs = np.array(nccs)
-        # local peaks with a strong score
-        for pos in np.where(nccs >= 0.8)[0]:
-            if nccs[pos] == nccs[max(0, pos - 3):pos + 4].max():
-                candidates.add((h_p - int(pos)) * ds)
-
+    a_full = np.array(prev, dtype=np.int16)
+    b_full = np.array(curr, dtype=np.int16)
     best_score, best_ov = -1.0, max(0, int(expected))
-    for cand in sorted(candidates):
-        if cand < max(3, int(expected) - 20):
+    for ov in range(lo, h + 1):
+        a = a_full[prev.height - ov:prev.height][::2]
+        b = b_full[:ov][::2]
+        if a.shape != b.shape:
             continue
-        # candidates come from a downscaled search; refine at full resolution
-        for ov in range(cand - 3, cand + 4):
-            score = exact_match_score(prev, curr, min(ov, h_c * ds, prev.height))
-            if score > best_score:
-                best_score, best_ov = score, ov
-        log.debug(f"final-seam candidate {cand}px: best nearby score {best_score:.3f}")
+        score = float(np.all(np.abs(a - b) <= 4, axis=-1).mean())
+        if score >= best_score:
+            best_score, best_ov = score, ov
+    log.debug(f"final seam: best overlap {best_ov}px (score {best_score:.3f})")
     if best_score < 0.9:
-        log.debug(f"final seam unverified (best {best_score:.3f}), using expected")
+        log.debug("final seam unverified, using expected")
         return max(0, int(expected))
     return best_ov
 
@@ -600,6 +577,8 @@ def main():
         output = Path.home() / 'Desktop' / f'fullpage_{ts}.png'
         result.save(str(output), optimize=True)
         log.info(f"Saved: {output} ({result.width}x{result.height})")
+        # a stale crash report from an old failure only causes confusion
+        (Path.home() / 'Desktop' / 'fullpage_error.txt').unlink(missing_ok=True)
         notify('Screenshot Saved', output.name)
         print(f"Saved: {output}", file=sys.stderr)
     finally:
