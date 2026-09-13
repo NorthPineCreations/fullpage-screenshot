@@ -457,6 +457,22 @@ def stitch(images, expected_overlap):
     return result
 
 
+# ---------------------------------------------------------------- clipboard
+
+def copy_to_clipboard(path):
+    """Put the finished PNG on the clipboard. The file on disk stays the
+    source of truth; a clipboard failure is never fatal."""
+    r = subprocess.run(
+        ['osascript', '-e',
+         f'set the clipboard to (read (POSIX file "{path}") as «class PNGf»)'],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        log.warning(f"clipboard copy failed: {r.stderr.strip()}")
+        return False
+    return True
+
+
 # ---------------------------------------------------------------- pidfile
 
 def stop_running_instance():
@@ -577,9 +593,11 @@ def main():
         output = Path.home() / 'Desktop' / f'fullpage_{ts}.png'
         result.save(str(output), optimize=True)
         log.info(f"Saved: {output} ({result.width}x{result.height})")
+        copied = copy_to_clipboard(output)
         # a stale crash report from an old failure only causes confusion
         (Path.home() / 'Desktop' / 'fullpage_error.txt').unlink(missing_ok=True)
-        notify('Screenshot Saved', output.name)
+        notify('Screenshot Saved',
+               f'{output.name} — copied to clipboard' if copied else output.name)
         print(f"Saved: {output}", file=sys.stderr)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
