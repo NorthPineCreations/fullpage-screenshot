@@ -372,14 +372,9 @@ def find_final_overlap(prev, curr, expected):
     """Overlap for the last seam, where the clamped final scroll makes the
     true overlap anywhere between `expected` and a full frame.
 
-    Coarse-to-fine: every plausible overlap is first scored cheaply on
-    8x-decimated pixel data (same "fraction of near-identical pixels"
-    metric, looser tolerance to allow for the coarser sampling). The best
-    few coarse positions, plus `expected` itself, are then rescored with
-    the exact full-resolution comparison in a small window around each —
-    that's the only part that has to match pixel for pixel. Ties resolve
-    toward the largest overlap, so repetitive or blank content near the
-    page bottom never duplicates.
+    Try every plausible overlap with exact pixel comparison at full
+    resolution. Ties resolve toward the largest overlap, so repetitive or
+    blank content near the page bottom never duplicates.
     """
     h = min(prev.height, curr.height)
     lo = max(3, int(expected) - 20)
@@ -387,55 +382,13 @@ def find_final_overlap(prev, curr, expected):
         return max(0, int(expected))
     a_full = np.array(prev, dtype=np.int16)
     b_full = np.array(curr, dtype=np.int16)
-
-    def exact_score(ov):
+    best_score, best_ov = -1.0, max(0, int(expected))
+    for ov in range(lo, h + 1):
         a = a_full[prev.height - ov:prev.height][::2]
         b = b_full[:ov][::2]
         if a.shape != b.shape:
-            return -1.0
-        return float(np.all(np.abs(a - b) <= 4, axis=-1).mean())
-
-    n_candidates = h + 1 - lo
-    COARSE_DS = 8
-    COARSE_THRESHOLD = 60  # below this, brute force is already cheap
-
-    if n_candidates <= COARSE_THRESHOLD:
-        candidate_ovs = range(lo, h + 1)
-    else:
-        # coarse pass: decimate both frames 8x in each axis (1/64 the
-        # pixels) and score every candidate on that cheap data
-        a_small = a_full[::COARSE_DS, ::COARSE_DS]
-        b_small = b_full[::COARSE_DS, ::COARSE_DS]
-        prev_h_s = a_small.shape[0]
-
-        def coarse_score(ov):
-            ov_s = max(1, ov // COARSE_DS)
-            a = a_small[prev_h_s - ov_s:prev_h_s]
-            b = b_small[:ov_s]
-            n = min(a.shape[0], b.shape[0])
-            if n < 1:
-                return -1.0
-            return float(np.all(np.abs(a[-n:] - b[:n]) <= 8, axis=-1).mean())
-
-        coarse_scores = {ov: coarse_score(ov) for ov in range(lo, h + 1)}
-        # break coarse ties toward the largest overlap too, so a tied plateau
-        # (blank/repetitive content) shortlists its largest position rather
-        # than an arbitrary one
-        ranked = sorted(coarse_scores, key=lambda ov: (coarse_scores[ov], ov), reverse=True)
-        shortlist = set(ranked[:8])
-        shortlist.add(max(lo, min(h, int(expected))))
-
-        # map each shortlisted position back to a full-res window around it
-        # (wider than the coarse decimation step, so a true match that lands
-        # just outside the top coarse cluster is still reachable)
-        candidate_ovs = sorted({
-            cand for ov in shortlist
-            for cand in range(max(lo, ov - 16), min(h, ov + 16) + 1)
-        })
-
-    best_score, best_ov = -1.0, max(0, int(expected))
-    for ov in candidate_ovs:
-        score = exact_score(ov)
+            continue
+        score = float(np.all(np.abs(a - b) <= 4, axis=-1).mean())
         if score >= best_score:
             best_score, best_ov = score, ov
     log.debug(f"final seam: best overlap {best_ov}px (score {best_score:.3f})")
